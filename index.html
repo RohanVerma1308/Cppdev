@@ -1,0 +1,175 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use Cwd 'cwd';
+use Getopt::Long;
+
+
+# Configure
+
+my $usage = <<"EOF";
+usage: dirserve [OPTIONS]
+
+These options are available:
+  --directory    Directory to serve.  Defaults to current directory.
+  --index-page   Page to show by default.  Defaults to directory listing.
+  --port         Port to serve on.  Defaults to 3000.
+  --no-dots      No navigating to parent directories via '..'.
+  --help         This message.
+EOF
+
+my @GETOPT_SPEC = qw/
+  directory=s
+  index=s
+  port=s
+  no-dots
+  help
+  /;
+
+my %opt = (
+	directory => cwd,
+	port      => 3000
+);
+
+my $p = Getopt::Long::Parser->new;
+$p->getoptions( \%opt, @GETOPT_SPEC );
+
+print $usage and exit if $opt{help};
+
+
+package App::dirserve;
+
+use Mojolicious::Lite;
+use Mojo::Server::Daemon;
+
+app->static->root($opt{directory});
+
+# Default page
+get '/' => sub {
+	shift->render_static( $opt{index} );
+}
+  if $opt{index};
+
+# Dir listing
+get '/(*dir)' => { dir => '' } => sub {
+	my $self = shift;
+
+	# Trailing slash confuses parent navigation
+	my $dir = $self->param('dir');
+	$dir =~ s|/$||;
+
+	my $fulldir = "$opt{directory}/$dir";
+
+	# Redirect to nearest valid dir
+	if (! -e $fulldir) {
+		$dir =~ s|/[^/]*$|| if ! -e $fulldir;
+		$self->redirect_to('/' . $dir);
+	}
+
+	opendir my ($dh), $fulldir;
+	my @items = map +{ name => $_, is_dir => -d "$fulldir/$_" }, readdir $dh;
+	closedir $dh;
+
+	# Remove . dirs
+	@items = grep $_->{name} !~ /^(?:\.|\.\.)$/, @items;
+
+	# No parent navigation
+	unshift @items, { name => '..', is_dir => 1 } if $dir and !$opt{'no-dots'};
+
+	$self->stash(
+		dir     => $dir,
+		fulldir => $fulldir,
+		items   => \@items
+	);
+
+	$self->render('listing');
+};
+
+app->secret('cookie-phrase');
+Mojo::Server::Daemon->new->silent(1)->listen( ["http://*:$opt{port}"] )->run;
+
+1;
+
+__DATA__
+
+@@ listing.html.ep
+
+% my $class = begin
+%	if (shift->{is_dir}) {
+		class="dir"
+%	}
+% end
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body {
+	font-family: "Lucida Grande", tahoma, sans-serif;
+	font-size: 100%;
+	margin: 0;
+	width: 100%;
+}
+h1 {
+	background: #999; /* for non-css3 browsers */
+	background: -webkit-gradient(linear, left top, left bottom, from(#A2C6E5), to(#2B6699)); /* webkit */
+	background: -moz-linear-gradient(top,  #A2C6E5,  #2B6699); /* mozilla */
+	filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#A2C6E5', endColorstr='#2B6699'); /* ie */
+	padding: 10px 0 10px 10px;
+	margin: 0;
+	color: white;
+}
+li.dir a {
+	font-weight: bold;
+	font-size: 1.1em;
+	color: #346D9E;
+}
+a {
+	color: #5C8DB8;
+}
+hr {
+	border: solid silver 1px;
+	width: 95%;
+}
+</style>
+</head>
+<body>
+<base href="/" />
+<h1><%= $fulldir %></h1>
+<ul>
+% foreach (@$items) {
+	<li<%== $class->($_) %>>
+		<a href="<%= $dir %>/<%= $_->{name} %>"><%= $_->{name} %></a>
+	</li>
+% }
+</ul>
+<hr />
+</body>
+</html>
+
+@@ favicon.ico (base64)
+AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAAAABEL
+AAARCwAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAwMtBAQESAAAAB0AAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABra2tjr6+v835+
+fvYnJye2AAAAHQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAn5+fm+np6f+bm5v/RERE5AEBASoAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAI+Pj6ri4uL/kJCQ/zg4ONYAAAAfAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC0tLS63Nzc/4qK
+iv8vLy/MAAAAFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AACXl5cEzs7OydfX1/+EhIT/JSYmxAAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAKysrCcvLy9jT09P/fn5+/yAdHMYAAAA9BAAAOAMA
+ADkAAAAgAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoqKg3Nzc3nyszN/4J6
+dP+sbTzyxX0858dxI+qyWwzsdzUC0gkCAGYAAAAWAAAAGwAAACUAAAAFAAAAAAAA
+AACMjIwf1NTU9MDCxP+FeG//4Zte//+6Y//+nTb/534R/9puBv+tVw7vkUsR0LJx
+NuBuPyDAAAAAFgAAAAAAAAAAnJycPtnZ2f25u73/hXZr/9+dYP//sl//+pcz/913
+Ef/SbAb/7IIY//6VKP//xGj/nmpA3wAAAB8AAAAAAAAAAFpaWlzn5+f/srW3/4Z1
+aP/kpGb//7Ng//qWM//edxH/0mwG/+N9Fv/0jCX//7tk/6d0R+EAAAAnAAAAAAAA
+AAB3d3d65OTk/6uusf+JdWX/6qtt//+0YP/6ljP/3ncR/9JsBv/jfRb/9Iwl//+8
+Zf+ygFHkAAAAMQAAAAAAAAAAm5ubmuDg4P+kp6r/inVj//Gzc///tGH/+pYy/953
+EP/SawX/430X//SMJf//u2T/votX6QEAADsAAAAAAAAAAKqqqrvg39//mJyf/4t0
+Yv/6wID//7lm//ybN//hfBb/0WsE/+N8Ff/0jCX//7pk/8uUXfEEAABHAAAAAAAA
+AAC2trbP8vLy/8nO0v+wkXX+65tL7eiTQtXhhjLM3H8p4N6KNPzshR7//5Qn//++
+Y//YoGL3CQEARwAAAAAAAAAAoaGhMHZ2dnJRUlJ+Ni8pVjIYABMUCAAHAwAABU0n
+CAvrgShBpF4gcWg7E3ptQBl1bDoUXAoEAA0AAAAA//8AAOP/hv/D/8jpw//67sP/
+1uXD/6TSw/+L0sA/bszAA4zhwAOO/8ADAALAAwAAgAMAAIADAACAAwAA//8AAA==
