@@ -1,4 +1,4 @@
-# ⚙️ CppDev Repository
+# ⚙️ Cppdev Repository
 
 This repository contains codes, practice exercises, and mini-projects developed as part of the **C++ Programming** course in my **II Semester of B.Tech CSE (AI & DS) at JECRC University**.
 
